@@ -425,7 +425,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_ZVqLkliz-P7ubiGMTdEvzg_UcafG3t1";
 
 /* URL ของ Google Apps Script Web App ที่ deploy แล้ว (ดูวิธีทำใน google-apps-script.gs)
    ใช้สำหรับอัปโหลดสลิปโอนเงินเข้าโฟลเดอร์ Google Drive ที่กำหนดไว้โดยอัตโนมัติ */
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx-6wi0Xb0GrzSRHf7vhqWn8hgXlXjGiHcL0M9f0jph3TsIOOg5GW4xvEDIH-9Yod0p/exec";
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/YOUR-DEPLOYMENT-ID/exec";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -952,7 +952,7 @@ async function loadDashboard() {
     const pct = totalLessons ? Math.round((doneCount / totalLessons) * 100) : 0;
 
     return `
-      <div class="panel" style="cursor:pointer;" onclick="openClassroom('${course.id}', '${escapeHtml(course.title)}')">
+      <div class="panel" style="cursor:pointer;" onclick="openDashboardCourseDetail('${course.id}', '${escapeHtml(course.title).replace(/'/g,"&apos;")}')">
         <h3 style="margin:0 0 6px;">${escapeHtml(course.title)}</h3>
         <div class="progress-bar" style="margin:10px 0 6px;"><div class="progress-fill" style="width:${pct}%;"></div></div>
         <p style="margin:0; font-size:13px; color:var(--muted);">${doneCount} / ${totalLessons} บทเรียน (${pct}%)</p>
@@ -960,6 +960,44 @@ async function loadDashboard() {
   }));
 
   el.innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">${cards.join('')}</div>`;
+}
+
+/* ---------- Popup แสดงรายละเอียดคอร์ส (กดจากการ์ดในหน้า "คอร์สของฉัน") ---------- */
+async function openDashboardCourseDetail(courseId, courseTitle) {
+  document.getElementById('cdTitle').textContent = courseTitle;
+  const body = document.getElementById('cdBody');
+  body.innerHTML = `<div class="loading"><div class="spinner"></div> กำลังโหลด...</div>`;
+  openModal('courseDetailOverlay');
+
+  const { data: course } = await sb.from('courses').select('*').eq('id', courseId).single();
+  const { data: counts } = await sb.rpc('get_enrolled_counts');
+  const countMap = new Map((counts || []).map(c => [c.course_id, Number(c.enrolled_count)]));
+  const courseWithCount = course ? { ...course, enrolled_count: countMap.get(course.id) || 0 } : {};
+
+  const { data: lessons } = await sb
+    .from('lessons')
+    .select('id, title, order_index')
+    .eq('course_id', courseId)
+    .order('order_index');
+
+  const dateLabel = formatClassDate(courseWithCount.class_date);
+  const seatInfo = getSeatInfo(courseWithCount);
+
+  body.innerHTML = `
+    <p style="color:var(--muted); font-size:14px; margin-bottom:14px;">${escapeHtml(courseWithCount.description || courseWithCount.short_description || 'ยังไม่มีคำอธิบายคอร์ส')}</p>
+    ${(dateLabel || seatInfo) ? `
+      <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px;">
+        ${dateLabel ? `<span class="meta-row" style="background:var(--bg); padding:6px 12px; border-radius:8px;">📅 ${dateLabel}${courseWithCount.class_time ? ' · ⏰ ' + escapeHtml(courseWithCount.class_time) : ''}</span>` : ''}
+        ${seatInfo ? `<span class="meta-row" style="background:var(--bg); padding:6px 12px; border-radius:8px;">👥 ${seatInfo.isFull ? 'เต็มแล้ว' : 'เหลือ ' + seatInfo.remaining + ' ที่นั่ง'} จากทั้งหมด ${courseWithCount.capacity} ที่นั่ง</span>` : ''}
+      </div>` : ''}
+    <div style="border:1px solid var(--line); border-radius:10px; padding:${lessons && lessons.length ? '6px' : '30px'}; margin-bottom:18px;">
+      ${lessons && lessons.length ? lessons.map(l => `
+        <div class="lesson-row" onclick="closeModal('courseDetailOverlay'); openClassroom('${courseId}', '${courseTitle.replace(/'/g, "\\'")}', '${l.id}')">
+          ${l.order_index}. ${escapeHtml(l.title)}
+        </div>`).join('') : `<p style="text-align:center; color:var(--muted); font-size:14px; margin:0;">คอร์สนี้ยังไม่มีบทเรียน</p>`}
+    </div>
+    <button class="btn btn-primary" style="width:100%;" onclick="closeModal('courseDetailOverlay')">ปิด</button>
+  `;
 }
 
 /* ============================================================
