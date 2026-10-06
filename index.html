@@ -950,47 +950,56 @@ async function loadDashboard() {
   }
   el.innerHTML = `<div class="loading"><div class="spinner"></div> กำลังโหลดคอร์สของคุณ...</div>`;
 
-  const { data: enrollments, error } = await sb
-    .from('enrollments')
-    .select('*, courses(*)')
-    .eq('user_id', currentUser.id)
-    .eq('status', 'active');
+  try {
+    const { data: enrollments, error } = await sb
+      .from('enrollments')
+      .select('*, courses(*)')
+      .eq('user_id', currentUser.id)
+      .eq('status', 'active');
 
-  if (error) {
-    el.innerHTML = `<div class="error-box">ไม่สามารถโหลดข้อมูลได้: ${error.message}</div>`;
-    return;
-  }
-
-  if (!enrollments || enrollments.length === 0) {
-    el.innerHTML = `<div class="empty">คุณยังไม่ได้ลงทะเบียนคอร์สใด — <a style="color:var(--indigo-dark); font-weight:600;" onclick="showView('courses')">ไปดูคอร์สเรียน</a></div>`;
-    return;
-  }
-
-  // นับความคืบหน้าของแต่ละคอร์ส
-  const cards = await Promise.all(enrollments.map(async (en) => {
-    const course = en.courses;
-    const { data: lessons } = await sb.from('lessons').select('id').eq('course_id', course.id);
-    const totalLessons = lessons?.length || 0;
-    let doneCount = 0;
-    if (totalLessons > 0) {
-      const { data: progress } = await sb.from('lesson_progress')
-        .select('lesson_id, is_completed')
-        .eq('user_id', currentUser.id)
-        .eq('is_completed', true)
-        .in('lesson_id', lessons.map(l => l.id));
-      doneCount = progress?.length || 0;
+    if (error) {
+      el.innerHTML = `<div class="error-box">ไม่สามารถโหลดข้อมูลได้: ${error.message}</div>`;
+      return;
     }
-    const pct = totalLessons ? Math.round((doneCount / totalLessons) * 100) : 0;
 
-    return `
-      <div class="panel" style="cursor:pointer;" onclick="openDashboardCourseDetail('${course.id}', '${escapeHtml(course.title).replace(/'/g,"&apos;")}')">
-        <h3 style="margin:0 0 6px;">${escapeHtml(course.title)}</h3>
-        <div class="progress-bar" style="margin:10px 0 6px;"><div class="progress-fill" style="width:${pct}%;"></div></div>
-        <p style="margin:0; font-size:13px; color:var(--muted);">${doneCount} / ${totalLessons} บทเรียน (${pct}%)</p>
-      </div>`;
-  }));
+    // ตัดรายการที่ข้อมูลคอร์สหายไป (เช่น คอร์สถูกลบ หรือมองไม่เห็นเพราะสิทธิ์) ออกก่อน
+    // กันไม่ให้หน้าค้างถ้าเจอรายการที่ผิดปกติ
+    const validEnrollments = (enrollments || []).filter(en => en.courses);
 
-  el.innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">${cards.join('')}</div>`;
+    if (validEnrollments.length === 0) {
+      el.innerHTML = `<div class="empty">คุณยังไม่ได้ลงทะเบียนคอร์สใด — <a style="color:var(--indigo-dark); font-weight:600;" onclick="showView('courses')">ไปดูคอร์สเรียน</a></div>`;
+      return;
+    }
+
+    // นับความคืบหน้าของแต่ละคอร์ส
+    const cards = await Promise.all(validEnrollments.map(async (en) => {
+      const course = en.courses;
+      const { data: lessons } = await sb.from('lessons').select('id').eq('course_id', course.id);
+      const totalLessons = lessons?.length || 0;
+      let doneCount = 0;
+      if (totalLessons > 0) {
+        const { data: progress } = await sb.from('lesson_progress')
+          .select('lesson_id, is_completed')
+          .eq('user_id', currentUser.id)
+          .eq('is_completed', true)
+          .in('lesson_id', lessons.map(l => l.id));
+        doneCount = progress?.length || 0;
+      }
+      const pct = totalLessons ? Math.round((doneCount / totalLessons) * 100) : 0;
+
+      return `
+        <div class="panel" style="cursor:pointer;" onclick="openDashboardCourseDetail('${course.id}', '${escapeHtml(course.title).replace(/'/g,"&apos;")}')">
+          <h3 style="margin:0 0 6px;">${escapeHtml(course.title)}</h3>
+          <div class="progress-bar" style="margin:10px 0 6px;"><div class="progress-fill" style="width:${pct}%;"></div></div>
+          <p style="margin:0; font-size:13px; color:var(--muted);">${doneCount} / ${totalLessons} บทเรียน (${pct}%)</p>
+        </div>`;
+    }));
+
+    el.innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">${cards.join('')}</div>`;
+  } catch (err) {
+    // ดักจับ error ทุกชนิดที่อาจเกิดขึ้น กันไม่ให้หน้าค้างอยู่ที่ "กำลังโหลด..." ตลอดไปแบบเงียบๆ
+    el.innerHTML = `<div class="error-box">เกิดข้อผิดพลาดในการโหลดคอร์สของคุณ: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
 /* ---------- Popup แสดงรายละเอียดคอร์ส (กดจากการ์ดในหน้า "คอร์สของฉัน") ---------- */
