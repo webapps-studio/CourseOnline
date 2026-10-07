@@ -918,13 +918,36 @@ async function handleEnrollFormSubmit(e) {
     }
 
     btn.textContent = 'กำลังส่งคำขอสมัคร...';
-    const { error } = await sb.from('enrollments').insert({
-      user_id: currentUser.id,
-      course_id: enrollFormCourse.id,
-      status: 'pending',
-      payment_slip_url: slipUrl
-    });
-    if (error) throw error;
+
+    // เช็คว่าเคยสมัครคอร์สนี้มาก่อนหรือยัง (เช่น เคยถูกปฏิเสธ/ยกเลิก แล้วสมัครใหม่)
+    const { data: existingEnrollment } = await sb
+      .from('enrollments')
+      .select('id, status')
+      .eq('user_id', currentUser.id)
+      .eq('course_id', enrollFormCourse.id)
+      .maybeSingle();
+
+    if (existingEnrollment?.status === 'active') {
+      throw new Error('คุณลงทะเบียนคอร์สนี้อยู่แล้ว');
+    }
+
+    let dbError;
+    if (existingEnrollment) {
+      // เคยสมัครมาก่อน (ปฏิเสธ/ยกเลิก) → อัปเดตแถวเดิมกลับเป็น pending พร้อมสลิปใหม่
+      const { error } = await sb.from('enrollments')
+        .update({ status: 'pending', payment_slip_url: slipUrl, approved_at: null, approved_by: null })
+        .eq('id', existingEnrollment.id);
+      dbError = error;
+    } else {
+      const { error } = await sb.from('enrollments').insert({
+        user_id: currentUser.id,
+        course_id: enrollFormCourse.id,
+        status: 'pending',
+        payment_slip_url: slipUrl
+      });
+      dbError = error;
+    }
+    if (dbError) throw dbError;
 
     closeModal('enrollFormOverlay');
     alert('ส่งคำขอสมัครเรียนแล้ว กรุณารอการอนุมัติจากแอดมิน');
